@@ -1,0 +1,63 @@
+name: Reusable - Build and Push Docker image
+
+on:
+  workflow_call:
+    inputs:
+      image_name:
+        required: true
+        type: string
+    secrets:
+      GHCR_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set repository owner and check if tag
+        id: vars
+        run: |
+          echo "REPO_OWNER=$(echo ${{ github.repository_owner }} | tr '[:upper:]' '[:lower:]')" >> $GITHUB_ENV
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            echo "IS_TAG=true" >> $GITHUB_ENV
+            echo "TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+            echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
+          else
+            echo "IS_TAG=false" >> $GITHUB_ENV
+            echo "VERSION=${GITHUB_REF#refs/heads/}" >> $GITHUB_ENV
+          fi
+          echo "COMMIT_HASH=${GITHUB_SHA:0:7}" >> $GITHUB_ENV
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --build-arg VERSION="${VERSION}" \
+            --build-arg HASH="${COMMIT_HASH}" \
+            -t ghcr.io/${REPO_OWNER}/${{ inputs.image_name }}:development .
+
+      - name: Push development image
+        run: |
+          docker push ghcr.io/${REPO_OWNER}/${{ inputs.image_name }}:development
+
+      - name: Tag and push release images
+        if: env.IS_TAG == 'true'
+        run: |
+          docker tag ghcr.io/${REPO_OWNER}/${{ inputs.image_name }}:development ghcr.io/${REPO_OWNER}/${{ inputs.image_name }}:${TAG}
+          docker tag ghcr.io/${REPO_OWNER}/${{ inputs.image_name }}:development ghcr.io/${REPO_OWNER}/${{ inputs.image_name }}:latest
+          docker push ghcr.io/${REPO_OWNER}/${{ inputs.image_name }}:${TAG}
+          docker push ghcr.io/${REPO_OWNER}/${{ inputs.image_name }}:latest
